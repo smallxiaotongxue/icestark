@@ -2,11 +2,11 @@ import * as React from 'react';
 import * as urlParse from 'url-parse';
 import { AppConfig, AppRouteProps, AppRouteComponentProps } from './AppRoute';
 import appHistory from './appHistory';
+import renderComponent from './util/renderComponent';
 import matchPath from './util/matchPath';
 import { recordAssets, emptyAssets } from './util/handleAssets';
 import { ICESTSRK_NOT_FOUND, ICESTSRK_ERROR } from './util/constant';
 import { setCache } from './util/cache';
-import { callAppLeave } from './util/appLifeCycle';
 import {
   routingEventsListeningTo,
   isInCapturedEventListeners,
@@ -33,6 +33,7 @@ export interface AppRouterProps {
     assetUrl?: string,
     element?: HTMLElement | HTMLLinkElement | HTMLStyleElement | HTMLScriptElement,
   ) => boolean;
+  basename?: string;
 }
 
 interface AppRouterState {
@@ -63,17 +64,6 @@ function getHashPath(hash: string = '/'): string {
   return searchIndex === -1 ? hashPath : hashPath.substr(0, searchIndex);
 }
 
-/**
- * Render Component, compatible with Component and <Component>
- */
-function renderComponent(Component: any, props = {}): React.ReactElement {
-  return React.isValidElement(Component) ? (
-    React.cloneElement(Component, props)
-  ) : (
-    <Component {...props} />
-  );
-}
-
 export default class AppRouter extends React.Component<AppRouterProps, AppRouterState> {
   private originalPush: OriginalStateFunction = window.history.pushState;
 
@@ -92,6 +82,7 @@ export default class AppRouter extends React.Component<AppRouterProps, AppRouter
     ErrorComponent: ({ err }) => <div>{err}</div>,
     NotFoundComponent: <div>NotFound</div>,
     shouldAssetsRemove: () => true,
+    basename: '',
   };
 
   constructor(props: AppRouterProps) {
@@ -101,33 +92,34 @@ export default class AppRouter extends React.Component<AppRouterProps, AppRouter
       showLoading: false,
     };
     recordAssets();
+    // render NotFoundComponent eventListener
+    window.addEventListener('icestark:not-found', this.triggerNotFound);
+
+    this.hijackHistory();
+    this.hijackEventListener();
   }
 
   componentDidMount() {
-    this.hijackHistory();
-    this.hijackEventListener();
     this.handleRouteChange(location.href, 'init');
-
-    // render NotFoundComponent eventListener
-    window.addEventListener('icestark:not-found', this.triggerNotFound);
   }
 
   componentWillUnmount() {
+    this.unmounted = true;
     const { shouldAssetsRemove } = this.props;
 
     this.unHijackHistory();
     this.unHijackEventListener();
-    emptyAssets(shouldAssetsRemove);
+
     window.removeEventListener('icestark:not-found', this.triggerNotFound);
-    this.unmounted = true;
+    // empty all assets
+    emptyAssets(shouldAssetsRemove, true);
+    setCache('root', null);
   }
 
   /**
    * Trigger NotFound
    */
   triggerNotFound = (): void => {
-    callAppLeave();
-
     // if AppRouter is unmounted, cancel all operations
     if (this.unmounted) return;
 
@@ -153,8 +145,6 @@ export default class AppRouter extends React.Component<AppRouterProps, AppRouter
    * Trigger Error
    */
   triggerError = (err: string): void => {
-    callAppLeave();
-
     // if AppRouter is unmounted, cancel all operations
     if (this.unmounted) return;
 
@@ -228,8 +218,13 @@ export default class AppRouter extends React.Component<AppRouterProps, AppRouter
    * Trigger statechange: pushState | replaceState
    */
   handleStateChange = (state: any, url: string, routeType?: RouteType): void => {
+    // if AppRouter is unmounted, cancel all operations
+    if (this.unmounted) return;
+
     this.setState({ url });
 
+    // setHistoryState after setState
+    // history in sub-application will not triggered callCapturedEventListeners for historyState is null
     setHistoryState(state);
 
     this.handleRouteChange(url, routeType);
@@ -239,11 +234,14 @@ export default class AppRouter extends React.Component<AppRouterProps, AppRouter
    * Trigger popstate
    */
   handlePopState = (state): void => {
+    // if AppRouter is unmounted, cancel all operations
+    if (this.unmounted) return;
+
     const url = location.href;
 
     setHistoryState(state);
-
     this.setState({ url });
+
     this.handleRouteChange(url, 'popstate');
   };
 
@@ -264,6 +262,7 @@ export default class AppRouter extends React.Component<AppRouterProps, AppRouter
       onAppLeave,
       shouldAssetsRemove,
       children,
+      basename: appBasename,
     } = this.props;
     const { url, showLoading } = this.state;
 
@@ -284,39 +283,29 @@ export default class AppRouter extends React.Component<AppRouterProps, AppRouter
         element = child;
 
         const { path, hashType } = child.props as AppRouteProps;
-
+        const routerPath = appBasename ? `${addLeadingSlash(appBasename)}${path}` : path;
         if (hashType) {
           const decodePath = HashPathDecoders[hashType === true ? 'slash' : hashType];
           const hashPath = decodePath(getHashPath(hash));
 
-          match = path ? matchPath(hashPath, { ...child.props }) : null;
+          match = path ? matchPath(hashPath, { ...child.props, path: routerPath }) : null;
         } else {
-          match = path ? matchPath(pathname, { ...child.props }) : null;
+          match = path ? matchPath(pathname, { ...child.props, path: routerPath }) : null;
         }
       }
     });
 
     if (match) {
-      const { path, basename, render, component } = element.props as AppRouteProps;
+      const { path, basename } = element.props as AppRouteProps;
 
-      const commonProps: AppRouteComponentProps = {
+      const componentProps: AppRouteComponentProps = {
         location: { pathname, query, hash },
         match,
         history: appHistory,
       };
 
-      if (component) {
-        callAppLeave();
-        return renderComponent(component, commonProps);
-      }
-
-      if (render && typeof render === 'function') {
-        callAppLeave();
-        return render(commonProps);
-      }
-
       // render AppRoute
-      setCache('basename', basename || (Array.isArray(path) ? path[0] : path));
+      setCache('basename', `${appBasename}${basename || (Array.isArray(path) ? path[0] : path)}`);
 
       const extraProps: any = {
         onAppEnter,
@@ -324,6 +313,7 @@ export default class AppRouter extends React.Component<AppRouterProps, AppRouter
         triggerLoading: this.triggerLoading,
         triggerError: this.triggerError,
         shouldAssetsRemove,
+        componentProps,
       };
 
       return (

@@ -44,7 +44,11 @@ describe('AppRouter', () => {
      */
     const { container, rerender, unmount, getByText } = render(
       <AppRouter {...props}>
-        <AppRoute path="/" component={<div data-testid="icestarkTest">test</div>} />
+        <AppRoute
+          path="/"
+          title="component"
+          component={<div data-testid="icestarkTest">test</div>}
+        />
       </AppRouter>,
     );
 
@@ -55,9 +59,10 @@ describe('AppRouter', () => {
       <AppRouter {...props}>
         <AppRoute
           path="/"
+          title="render"
           render={() => (
             <div data-testid="icestarkTest">
-              test
+              testRender
               <button
                 type="submit"
                 onClick={() => {
@@ -80,7 +85,7 @@ describe('AppRouter', () => {
       </AppRouter>,
     );
 
-    expect(container.innerHTML).toContain('test');
+    expect(container.innerHTML).toContain('testRender');
     expect(props.onRouteChange).toHaveBeenCalledTimes(1);
 
     fireEvent.click(getByText(/Jump Hash/i));
@@ -97,7 +102,7 @@ describe('AppRouter', () => {
     setCache('appLeave', () => {});
     rerender(
       <AppRouter {...props}>
-        <AppRoute path="/" url={[]} hashType />
+        <AppRoute path="/" title="empty" url={[]} hashType />
       </AppRouter>,
     );
 
@@ -217,18 +222,78 @@ describe('AppRouter', () => {
   test('test for Only AppRoute Component', () => {
     window.history.pushState({}, 'test', '/');
     const { container, unmount } = render(
-      <AppRoute path="/" component={<div data-testid="icestarkTest">test</div>} />,
+      <AppRoute path="/" component={<div data-testid="icestarkTest">test component</div>} />,
     );
-    expect(container.innerHTML).toContain('ice-stark-loading');
+    expect(container.innerHTML).toContain('test component');
     unmount();
   });
 
-  test('test for Only AppRoute Component', () => {
+  test('test for Only AppRoute Render', () => {
     window.history.pushState({}, 'test', '/');
     const { container, unmount } = render(
-      <AppRoute path="/" component={<div data-testid="icestarkTest">test</div>} />,
+      <AppRoute path="/" render={() => <div data-testid="icestarkTest">test render</div>} />,
     );
-    expect(container.innerHTML).toContain('ice-stark-loading');
+    expect(container.innerHTML).toContain('test render');
+    unmount();
+  });
+
+  test('test for app basename', () => {
+    window.history.pushState({}, 'test', '/icestark');
+    const { container, unmount } = render(
+      <AppRouter basename="icestark">
+        <AppRoute path="/" render={() => <div data-testid="icestarkTest">test render</div>} />
+      </AppRouter>,
+    );
+    expect(container.innerHTML).toContain('test render');
+  });
+
+  test('test for component update', () => {
+    window.history.pushState({}, 'test', '/');
+    const RenerComponent = (props) => {
+      return (
+        <div data-testid="icestarkTest">
+          {props.location.pathname === '/' ? 'test render a' : 'test render b'}
+        </div>
+      );
+    };
+    
+    const { container, unmount } = render(
+      <AppRouter>
+        <AppRoute
+          path="/"
+          title="component"
+          component={<RenerComponent />}
+        />
+      </AppRouter>
+    );
+    expect(container.innerHTML).toContain('test render a');
+    window.history.pushState({}, 'test', '/b');
+    expect(container.innerHTML).toContain('test render b');
+    unmount();
+  });
+
+  test('test for render update', () => {
+    window.history.pushState({}, 'test', '/');
+    const RenerComponent = (props) => {
+      return (
+        <div data-testid="icestarkTest">
+          {props.location.pathname === '/' ? 'test render a' : 'test render b'}
+        </div>
+      );
+    };
+    
+    const { container, unmount } = render(
+      <AppRouter>
+        <AppRoute
+          path="/"
+          title="component"
+          render={(props) => <RenerComponent {...props} />}
+        />
+      </AppRouter>
+    );
+    expect(container.innerHTML).toContain('test render a');
+    window.history.pushState({}, 'test', '/b');
+    expect(container.innerHTML).toContain('test render b');
     unmount();
   });
 });
@@ -264,6 +329,12 @@ describe('AppLink', () => {
 
     fireEvent.click(getByText(/This is a test/i));
     expect(mockReplaceState.mock.calls.length).toBe(1);
+  });
+  test('hashType of AppLink', () => {
+    const className = 'link-node';
+    const { container } = render(<AppLink className={className} to="/test" hashType>link</AppLink>);
+    const appLinkNode = container.querySelector(`.${className}`);
+    expect(appLinkNode.getAttribute('href')).toBe('/#/test');
   });
 });
 
